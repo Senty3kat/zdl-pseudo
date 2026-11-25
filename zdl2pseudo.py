@@ -126,10 +126,16 @@ def function_range(insns, labels, func):
     """Restrict analysis to one exported function, not the whole ELF."""
     fns = [(a, l) for a, l in labels.items() if not l.startswith("$C$L")]
     start = None
-    for a, l in sorted(fns):
-        if func and (l == func or l.startswith(func)):
-            start = a
-            break
+    if func:
+        for a, l in sorted(fns):
+            if l == func:
+                start = a
+                break
+    if start is None and func:
+        for a, l in sorted(fns):
+            if l.startswith(func):
+                start = a
+                break
     if start is None:
         for a, l in sorted(fns):
             if l.startswith("Fx_") and not l.endswith(("_init", "_onf", "_edit", "_onf_aft")):
