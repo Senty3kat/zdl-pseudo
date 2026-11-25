@@ -1,0 +1,20 @@
+{
+  "effect_name": "ST_GT_GEQ",
+  "comment": "Rebuilt from lifted pseudo-C of a stock parametric EQ.",
+  "gid": 2,
+  "fxid": 499,
+  "fxid_version": "1.00",
+  "flags_byte": 1,
+  "dsp_cost": 20.0,
+  "params": [
+    {"name": "Band1", "max": 24, "default": 12, "comment": "Band 1 level."},
+    {"name": "Band2", "max": 24, "default": 12, "comment": "Band 2 level."},
+    {"name": "Band3", "max": 24, "default": 12, "comment": "Band 3 level."},
+    {"name": "Band4", "max": 24, "default": 12, "comment": "Band 4 level."},
+    {"name": "Band5", "max": 24, "default": 12, "comment": "Band 5 level."},
+    {"name": "Band6", "max": 24, "default": 12, "comment": "Band 6 level."},
+    {"name": "Level", "max": 100, "default": 50, "comment": "Output level."}
+  ],
+  "audio_func_name": "Fx_ST_GT_GEQ",
+  "audio_nop": false
+}

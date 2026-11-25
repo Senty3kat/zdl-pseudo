@@ -70,10 +70,19 @@ python calibrate_pseudo.py \
   --out CALIBRATION.md
 ```
 
+Пересборка lifted-кода:
+
+```
+python emit_c.py effect.ZDL -o effect.c --func Fx_...
+cd examples/st_gt_geq
+python build.py
+```
+
 ## Ограничения
 
 - Исходные имена переменных и типы не восстанавливаются.
 - Для стоковых эффектов нужно явно указывать `--func`: автопоиск может выбрать edit-хендлер или объект в данных вместо аудиофункции.
+- Эмиттер C пока покрывает только набор команд примера; для других эффектов шаблоны нужно расширять.
 - Циклы с программным конвейером считаются приблизительно.
 - Предикаты и параллельные пакеты показываются как структура, а не как точный порядок вычислений.
 - Таблицы коэффициентов и линии задержки видны как адреса чтения и записи; их смысл определяет человек.
@@ -85,6 +94,8 @@ python calibrate_pseudo.py \
 | --- | --- |
 | `zdl2pseudo.py` | Парсер, граф, символический проход и генератор псевдокода |
 | `calibrate_pseudo.py` | Поиск пар и сравнение структурных признаков |
+| `emit_c.py` | Генератор компилируемого C по аудиофункции |
+| `examples/st_gt_geq/` | Пример пересборки lifted-кода в ZDL |
 | `HOWTO.md` | Пошаговое применение и описание ключей |
 | `CONTRIBUTING.md` | Правила участия |
 
@@ -189,10 +200,19 @@ python calibrate_pseudo.py \
   --out CALIBRATION.md
 ```
 
+Rebuilding lifted code:
+
+```
+python emit_c.py effect.ZDL -o effect.c --func Fx_...
+cd examples/st_gt_geq
+python build.py
+```
+
 ## Limits
 
 - Original variable names and types are not recovered.
 - For stock effects, pass `--func` explicitly: auto-detection may pick an edit handler or a data object instead of the audio function.
+- The C emitter currently covers the example instruction set; other effects need additional templates.
 - Software-pipelined loops are counted approximately.
 - Predicates and parallel packets are shown as structure, not exact evaluation order.
 - Coefficient tables and delay lines appear as read/write addresses; their meaning is decided by the reader.
@@ -204,6 +224,8 @@ python calibrate_pseudo.py \
 | --- | --- |
 | `zdl2pseudo.py` | Parser, CFG, symbolic pass and pseudo-C generator |
 | `calibrate_pseudo.py` | Pair discovery and structural comparison |
+| `emit_c.py` | Compilable C emitter for an audio function |
+| `examples/st_gt_geq/` | Example rebuild of lifted code into a ZDL |
 | `HOWTO.md` | Step-by-step usage and options |
 | `CONTRIBUTING.md` | Contribution rules |
 
