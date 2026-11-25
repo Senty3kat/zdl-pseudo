@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Emit compilable C for one ZDL audio function.
 
-The C uses a union register file, so integer pointer arithmetic and float
-operations share the same 32-bit storage, like the C674x register file.
+Registers are represented by a union so integer pointer arithmetic and float
+values share the same 32-bit storage, like the C674x register file.
 
 Usage:
     python emit_c.py EFFECT.ZDL -o EFFECT.c --func Fx_...
@@ -15,10 +15,11 @@ from pathlib import Path
 import zdl2pseudo as z
 
 HERE = Path(__file__).resolve().parent
-DISASM = HERE / "disasm_zdl.py"
 
+FUNC_RANGE = None
+LABEL_PREFIX = ""
 REG = re.compile(r"^[AB]\d+$")
-MEM = re.compile(r"^\*(\+)?([AB]\d+)(?:\+\+)?\[(\d+)\]$")
+MEM = re.compile(r"^\*(\+\+|[+-])?([AB]\d+)(--|\+\+)?(?:\[([AB]\d+|-?\d+)\]|\(([AB]\d+|-?\d+)\))?$")
 
 
 def v(x):
@@ -32,11 +33,59 @@ def fv(x):
 
 
 def mem(s):
-    m = MEM.match(s.strip())
+    """Return base, byte offset, action: none, pre_inc, pre_dec, post_inc."""
+    s = s.strip()
+    m = MEM.match(s)
     if not m:
         raise ValueError("unsupported memory operand: %s" % s)
-    base, idx = m.group(2), int(m.group(3)) * 4
-    return base, idx, "++" in s
+    pre, base, post, idx, paren = m.groups()
+    if idx is not None and REG.match(idx):
+        off = f"{idx}.u * 4"
+    elif idx is not None:
+        off = int(idx) * 4
+    elif paren is not None:
+        off = f"{paren}.u" if REG.match(paren) else int(paren)
+    else:
+        off = 0
+    if pre == "-":
+        off = -off if isinstance(off, int) else "-(%s)" % off
+    if pre == "++":
+        action = "pre_inc"
+    elif post == "--":
+        action = "pre_dec"
+    elif post == "++":
+        action = "post_inc"
+    else:
+        action = "none"
+    return base, off, action
+
+
+def off_add(off, n):
+    return off + n if isinstance(off, int) else "(%s) + %d" % (off, n)
+
+
+def mem_read(base, off, action):
+    out = []
+    if action == "pre_inc":
+        out.append("%s += %s;" % (v(base), off))
+    elif action == "pre_dec":
+        out.append("%s -= %s;" % (v(base), off))
+    out.append("MEM32(%s, %s)" % (v(base), off))
+    if action == "post_inc":
+        out.append("%s += %s;" % (v(base), off))
+    return out
+
+
+def mem_write(base, off, action, value):
+    out = []
+    if action == "pre_inc":
+        out.append("%s += %s;" % (v(base), off))
+    elif action == "pre_dec":
+        out.append("%s -= %s;" % (v(base), off))
+    out.append("MEM32(%s, %s) = %s;" % (v(base), off, value))
+    if action == "post_inc":
+        out.append("%s += %s;" % (v(base), off))
+    return out
 
 
 def pred(ins):
@@ -49,14 +98,22 @@ def pred(ins):
 
 
 def label_for(addr):
-    return "L_%08X" % addr
+    return "L_%s_%08X" % (LABEL_PREFIX, addr)
 
 
-def emit_insn(ins, labels):
+def branch_addr(s):
+    m = re.search(r"PC[+-]\d+\s*=\s*(0x)?([0-9A-Fa-f]+)", s)
+    return int(m.group(2), 16) if m else None
+
+
+def emit_insn(ins):
     op = ins.op.split(".")[0]
     a = [x.strip() for x in ins.args.split(",")]
     p = pred(ins)
-    if op == "NOP" or op.startswith(".fphead") or op in ("SPMASK", "SPLOOPD", "SPKERNEL"):
+    if op.endswith(":") or op.startswith("$C$RL"):
+        return ["%s:" % label_for(ins.addr)]
+    if op in ("NOP", "SPKERNEL", "SPLOOPD", "SPMASK", "MVC",
+              "DPSP", "DINT", "RINT", "ADDKPC", ".fphead") or op.startswith(".fphead"):
         return []
     if op == "MV":
         return [f"{p}{v(a[1])} = {v(a[0])};"]
@@ -68,51 +125,112 @@ def emit_insn(ins, labels):
         return [f"{p}{v(a[2])} = {v(a[0])} + {v(a[1])};"]
     if op == "ADDK":
         return [f"{p}{v(a[1])} += {a[0]};"]
+    if op == "ADDAW":
+        return [f"{p}{v(a[2])} = {v(a[0])} + ({v(a[1])} << 2);"]
+    if op == "ADDAD":
+        return [f"{p}{v(a[2])} = {v(a[0])} + ({v(a[1])} << 1);"]
+    if op == "SUB":
+        return [f"{p}{v(a[2])} = {v(a[0])} - {v(a[1])};"]
     if op == "SHL":
         return [f"{p}{v(a[2])} = {v(a[0])} << {v(a[1])};"]
+    if op == "SET":
+        start, end = int(a[1], 0), int(a[2], 0)
+        mask = ((1 << (end - start + 1)) - 1) << start
+        return [f"{p}{v(a[3])} = {v(a[0])} | 0x{mask:08X}u;"]
+    if op == "MPYSPDP":
+        return []
     if op in ("MPYSP", "ADDSP", "SUBSP"):
         sym = {"MPYSP": "*", "ADDSP": "+", "SUBSP": "-"}[op]
-        return [f"{p}{a[2]}.f = {fv(a[0])} {sym} {fv(a[1])};"]
+        return [f"{p}{a[-1]}.f = {fv(a[0])} {sym} {fv(a[1])};"]
     if op in ("CMPLTSP", "CMPGTSP"):
         sym = "<" if op == "CMPLTSP" else ">"
         return [f"{p}{v(a[2])} = ({fv(a[0])} {sym} {fv(a[1])});"]
-    if op == "LDW":
-        base, off, inc = mem(a[0])
-        out = [f"{p}{v(a[1])} = MEM32({v(base)}, {off});"]
-        if inc:
-            out.append(f"{p}{v(base)} += {off};")
+    if op in ("CMPLTU", "CMPGTU", "CMPGT", "CMPLT"):
+        sym = {"CMPLTU": "<", "CMPGTU": ">", "CMPGT": ">", "CMPLT": "<"}[op]
+        return [f"{p}{v(a[2])} = ({v(a[0])} {sym} {v(a[1])});"]
+    if op in ("LDW", "LDDW", "LDNDW"):
+        base, off, action = mem(a[0])
+        dst = a[1]
+        if op == "LDW":
+            out = []
+            if action == "pre_inc":
+                out.append("%s += %s;" % (v(base), off))
+            elif action == "pre_dec":
+                out.append("%s -= %s;" % (v(base), off))
+            out.append("%s%s = MEM32(%s, %s);" % (p, v(dst), v(base), off))
+            if action == "post_inc":
+                out.append("%s += %s;" % (v(base), off))
+            return out
+        hi, lo = dst.split(":")
+        step = off_add(off, 8)
+        out = []
+        if action == "pre_inc":
+            out.append("%s += %s;" % (v(base), step))
+        elif action == "pre_dec":
+            out.append("%s -= %s;" % (v(base), step))
+        out.append("%s%s = MEM32(%s, %s);" % (p, v(lo), v(base), off))
+        out.append("%s%s = MEM32(%s, %s);" % (p, v(hi), v(base), off_add(off, 4)))
+        if action == "post_inc":
+            out.append("%s += %s;" % (v(base), step))
         return out
-    if op == "LDNDW":
-        base, off, inc = mem(a[0])
-        hi, lo = a[1].split(":")
-        out = [f"{p}{v(lo)} = MEM32({v(base)}, {off});",
-               f"{p}{v(hi)} = MEM32({v(base)}, {off + 4});"]
-        if inc:
-            out.append(f"{p}{v(base)} += {off + 8};")
+    if op in ("STW", "STDW", "STNDW"):
+        base, off, action = mem(a[1])
+        if op == "STW":
+            out = []
+            if action == "pre_inc":
+                out.append(p + "%s += %s;" % (v(base), off))
+            elif action == "pre_dec":
+                out.append(p + "%s -= %s;" % (v(base), off))
+            out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off, v(a[0])))
+            if action == "post_inc":
+                out.append(p + "%s += %s;" % (v(base), off))
+            return out
+        hi, lo = a[0].split(":")
+        step = off_add(off, 8)
+        out = []
+        if action == "pre_inc":
+            out.append("%s += %s;" % (v(base), step))
+        elif action == "pre_dec":
+            out.append("%s -= %s;" % (v(base), step))
+        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off, v(lo)))
+        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off_add(off, 4), v(hi)))
+        if action == "post_inc":
+            out.append("%s += %s;" % (v(base), step))
         return out
-    if op == "STW":
-        base, off, inc = mem(a[1])
-        out = [f"{p}MEM32({v(base)}, {off}) = {v(a[0])};"]
-        if inc:
-            out.append(f"{p}{v(base)} += {off};")
-        return out
+    if op == "BDEC":
+        addr = branch_addr(a[0])
+        return [f"{p}if (--{v(a[1])} != 0) goto {label_for(addr)};"]
     if op in ("B", "BNOP"):
-        bt = z.branch_target(ins)
-        if not bt:
-            return []
-        return [f"{p}goto {label_for(bt[1])};"]
-    if op in ("CALLP", "ADDKPC"):
-        return []
+        addr = branch_addr(ins.args)
+        if addr:
+            if FUNC_RANGE and not (FUNC_RANGE[0] <= addr < FUNC_RANGE[1]):
+                name = a[0].split()[0]
+                if name.startswith(".") or name.startswith("$"):
+                    parts = [x for x in re.split(r"[.$]", name) if x]
+                    name = parts[-1]
+                if re.match(r"^[A-Za-z_]\w*$", name):
+                    return [f"{p}{name}(ctx);", "return;"]
+            return [f"{p}goto {label_for(addr)};"]
+        name = a[0].split()[0]
+        if REG.match(name):
+            return ["return;"]
+        return [f"{p}{name}(ctx);", "return;"]
+    if op == "CALLP":
+        name = a[0].split()[0]
+        return [f"{p}{name}(ctx);"]
     return ["/* unsupported %s %s */" % (ins.op, ins.args)]
 
 
 def emit_c(insns, labels, func):
+    global FUNC_RANGE, LABEL_PREFIX
+    FUNC_RANGE = (min(i.addr for i in insns), max(i.addr for i in insns) + 8)
+    LABEL_PREFIX = re.sub(r"\W", "_", func)
     targets = set(labels)
     for ins in insns:
         bt = z.branch_target(ins)
         if bt:
             targets.add(bt[1])
-    regs = sorted({r for i in insns for r in re.findall(r"\b[AB]\d+\b", i.args)})
+    regs = ["%s%d" % (side, n) for side in "AB" for n in range(32)]
     out = [
         "/* Generated by emit_c.py from a ZDL audio function. */",
         "#include <stdint.h>",
@@ -121,15 +239,28 @@ def emit_c(insns, labels, func):
         '#pragma CODE_SECTION(%s, ".audio")' % func,
         "void %s(unsigned int *ctx)" % func,
         "{",
-        "  reg_t %s;" % ", ".join(regs) if regs else "",
+        "  reg_t %s;" % ", ".join(regs),
+        "  unsigned int stack_mem[4096];",
         "  A4.u = (unsigned int)ctx;",
+        "  B15.u = (unsigned int)(stack_mem + 2048);",
     ]
+    emitted = set()
     for ins in insns:
-        if ins.addr in targets:
+        if ins.addr in targets and ins.addr not in emitted:
             out.append("%s:" % label_for(ins.addr))
-        out += ["    " + line for line in emit_insn(ins, labels)]
+            emitted.add(ins.addr)
+        for line in emit_insn(ins):
+            if line.endswith(":"):
+                lab = line[:-1]
+                m = re.search(r"_([0-9A-F]{8})$", lab)
+                addr = int(m.group(1), 16) if m else None
+                if addr is not None:
+                    if addr in emitted:
+                        continue
+                    emitted.add(addr)
+            out.append("    " + line)
     out.append("}")
-    return "\n".join(x for x in out if x != "") + "\n"
+    return "\n".join(out) + "\n"
 
 
 def main():
@@ -139,15 +270,12 @@ def main():
     inp = Path(args[0])
     out = None
     func = ""
-    disasm = None
     i = 1
     while i < len(args):
         if args[i] in ("-o", "--output") and i + 1 < len(args):
             out = Path(args[i + 1]); i += 2
         elif args[i] == "--func" and i + 1 < len(args):
             func = args[i + 1]; i += 2
-        elif args[i] == "--disasm" and i + 1 < len(args):
-            disasm = args[i + 1]; i += 2
         else:
             sys.exit("unknown option: %s" % args[i])
     with tempfile.TemporaryDirectory(prefix="emit_c_") as td:

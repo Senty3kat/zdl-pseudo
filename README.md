@@ -82,7 +82,7 @@ python build.py
 
 - Исходные имена переменных и типы не восстанавливаются.
 - Для стоковых эффектов нужно явно указывать `--func`: автопоиск может выбрать edit-хендлер или объект в данных вместо аудиофункции.
-- Эмиттер C пока покрывает только набор команд примера; для других эффектов шаблоны нужно расширять.
+- Эмиттер C покрывает команды из `examples/REBUILD_ALL.md`; `MPYSPDP` пока пропускается.
 - Циклы с программным конвейером считаются приблизительно.
 - Предикаты и параллельные пакеты показываются как структура, а не как точный порядок вычислений.
 - Таблицы коэффициентов и линии задержки видны как адреса чтения и записи; их смысл определяет человек.
@@ -212,7 +212,7 @@ python build.py
 
 - Original variable names and types are not recovered.
 - For stock effects, pass `--func` explicitly: auto-detection may pick an edit handler or a data object instead of the audio function.
-- The C emitter currently covers the example instruction set; other effects need additional templates.
+- The C emitter covers the instructions listed in `examples/REBUILD_ALL.md`; `MPYSPDP` is still skipped.
 - Software-pipelined loops are counted approximately.
 - Predicates and parallel packets are shown as structure, not exact evaluation order.
 - Coefficient tables and delay lines appear as read/write addresses; their meaning is decided by the reader.
