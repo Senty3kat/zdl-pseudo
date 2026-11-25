@@ -73,6 +73,7 @@ python calibrate_pseudo.py \
 ## Ограничения
 
 - Исходные имена переменных и типы не восстанавливаются.
+- Для стоковых эффектов нужно явно указывать `--func`: автопоиск может выбрать edit-хендлер или объект в данных вместо аудиофункции.
 - Циклы с программным конвейером считаются приблизительно.
 - Предикаты и параллельные пакеты показываются как структура, а не как точный порядок вычислений.
 - Таблицы коэффициентов и линии задержки видны как адреса чтения и записи; их смысл определяет человек.
@@ -191,6 +192,7 @@ python calibrate_pseudo.py \
 ## Limits
 
 - Original variable names and types are not recovered.
+- For stock effects, pass `--func` explicitly: auto-detection may pick an edit handler or a data object instead of the audio function.
 - Software-pipelined loops are counted approximately.
 - Predicates and parallel packets are shown as structure, not exact evaluation order.
 - Coefficient tables and delay lines appear as read/write addresses; their meaning is decided by the reader.

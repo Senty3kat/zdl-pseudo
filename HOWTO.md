@@ -97,6 +97,7 @@ python calibrate_pseudo.py \
 | --- | --- |
 | `disassembler not found` | Указать `--disasm` или передать готовый `.lst` |
 | `no instructions parsed` | Листинг пустой или не в формате TI; пересобрать листинг |
+| Подъём показывает edit-хендлер или объект в `.const` | Указать `--func` с точным именем аудиофункции |
 | `no ZDL/source pairs found` | Проверить имена подкаталогов и ключи `--zdl-dir`, `--src-dir` |
 | Высокий `unknown %` | Добавить шаблон команды и повторить калибровку |
 | Расхождение по циклам | Определить, это вложенный цикл или копии конвейера; сравнить с исходной реализацией |
@@ -154,6 +155,7 @@ python calibrate_pseudo.py \
 | --- | --- |
 | `disassembler not found` | Pass `--disasm` or use a ready `.lst` |
 | `no instructions parsed` | Rebuild the TI listing |
+| Lift shows an edit handler or a `.const` object | Pass `--func` with the exact audio function name |
 | `no ZDL/source pairs found` | Check directory names and input options |
 | High `unknown %` | Add an instruction template and recalibrate |
 | Loop mismatch | Separate nested loops from software-pipeline copies |
