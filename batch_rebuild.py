@@ -75,12 +75,13 @@ def zdl_info(path):
             mx = struct.unpack_from("<I", e, 12)[0]
             df = struct.unpack_from("<I", e, 16)[0]
             fl = struct.unpack_from("<I", e, 0x2C)[0]
-            ents.append((nm.decode("latin-1"), mx, df))
+            ents.append((nm.decode("latin-1"), mx, df, fl))
             off += 0x30
             if fl & 4 or len(ents) > 12:
                 break
         if ents and len(ents) >= 2 and ents[1][1] == 0xFFFFFFFF:
-            return fxid, gid, [x for x in ents[2:] if x[0] and x[1] != 0xFFFFFFFF]
+            return fxid, gid, ents[1][0], [(x[0], x[1], x[2], x[3]) for x in ents[2:]
+                                          if x[0] and x[1] != 0xFFFFFFFF]
         i += 1
 
 
@@ -112,17 +113,19 @@ def rebuild(zdl, func, work, undefs=()):
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     out = work / "rebuilt.ZDL"
     try:
-        fxid, gid, knobs = zdl_info(zdl)
-        params = [{"name": n, "max": mx, "default": df} for n, mx, df in knobs]
+        fxid, gid, effect_name, knobs = zdl_info(zdl)
+        params = [{"name": n, "max": mx, "default": df, "flags": fl}
+                  for n, mx, df, fl in knobs]
     except Exception:
-        fxid, gid = 900, 2
-        params = [{"name": "P%d" % (i + 1), "max": 100, "default": 50} for i in range(9)]
+        fxid, gid, effect_name = 900, 2, "REBUILT"
+        params = [{"name": "P%d" % (i + 1), "max": 100, "default": 50, "flags": 0}
+                  for i in range(9)]
     if not params:
-        params = [{"name": "P1", "max": 100, "default": 50}]
+        params = [{"name": "P1", "max": 100, "default": 50, "flags": 0}]
     cfg = LinkerConfig(
         materialize_init=True,
-        effect_name="REBUILT",
-        screen_image=make_cover("REBUILT", [p["name"] for p in params[:3]]),
+        effect_name=effect_name[:12],
+        screen_image=make_cover(effect_name[:12], [p["name"] for p in params[:3]]),
         audio_func_name=func,
         gid=gid,
         fxid=fxid,
