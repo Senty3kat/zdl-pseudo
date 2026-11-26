@@ -2,6 +2,7 @@
 import argparse
 import json
 import math
+import os
 import shutil
 import struct
 import subprocess
@@ -10,7 +11,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-EMU = ROOT / "emulator" / "build" / "c6xboot.exe"
+EMU = Path(os.environ.get("C6XBOOT", str(ROOT / "emulator" / "build" / "c6xboot.exe")))
 FSEDIT = ROOT / "emulator" / "tools" / "fsedit.py"
 FW = ROOT / "vst_zdl" / "fw70"
 SINE = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\hdfw-hd\sine.wav")

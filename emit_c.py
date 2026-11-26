@@ -377,7 +377,8 @@ def emit_c(insns, labels, func):
         "void %s(unsigned int *ctx)" % func,
         "{",
         "  reg_t %s;" % ", ".join(regs),
-        "  unsigned int stack_mem[4096];",
+        "  #pragma DATA_SECTION(stack_mem, \".fardata\")",
+        "  static unsigned int stack_mem[4096];",
         "  A4.u = (unsigned int)ctx;",
         "  B15.u = (unsigned int)(stack_mem + 2048);",
     ]

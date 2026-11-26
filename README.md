@@ -96,7 +96,7 @@ python analyze_unsupported.py
 - Для стоковых эффектов нужно явно указывать `--func`: автопоиск может выбрать edit-хендлер или объект в данных вместо аудиофункции.
 - Эмиттер C покрывает команды из `examples/REBUILD_ALL.md`, а также топ-операции `SMPY32`, `SADD/SSUB`, `MVD`, `SHR/SHRU/SSHL`, `ABS`, `INTSP`, `SPDP`, `CMPEQSP` и double-арифметику. Оставшиеся `unsupported` собраны в `UNSUPPORTED_PATTERNS.md`. Это ограничение эмиттера, а не эмулятора: в `emulator/exec.c` обработчики этих инструкций уже есть.
 - Проверенный прогон по 448 фабричным ZDL: `448 ok / 0 fail`; после добавления шаблонов неподдерживаемых операций осталось `56` операций `11` видов (было `6541` операций `39` видов).
-- Полное сравнение звука: `85 equal`, `361 diff`, `2 error`; два оставшихся падения — пересобранные `StereoDly` и `StereoDly_1` из-за неинициализированного указателя в скопированном edit-хендлере.
+- После переноса фейкового стека в отдельный `.fardata` полное сравнение: `100 equal`, `348 diff`, `0 error`. Большинство оставшихся расхождений — редкие `-1 LSB` после старта звука; с допуском 1 LSB совпадает `442 / 448`.
 - Циклы с программным конвейером считаются приблизительно.
 - Предикаты и параллельные пакеты показываются как структура, а не как точный порядок вычислений.
 - Таблицы коэффициентов и линии задержки видны как адреса чтения и записи; их смысл определяет человек.
@@ -243,7 +243,7 @@ python analyze_unsupported.py
 - For stock effects, pass `--func` explicitly: auto-detection may pick an edit handler or a data object instead of the audio function.
 - The C emitter covers `examples/REBUILD_ALL.md` plus the top ops `SMPY32`, `SADD/SSUB`, `MVD`, `SHR/SHRU/SSHL`, `ABS`, `INTSP`, `SPDP`, `CMPEQSP` and double arithmetic. Remaining `unsupported` ops are collected in `UNSUPPORTED_PATTERNS.md`. This is a C-emitter limit, not an emulator limit: `emulator/exec.c` already has handlers for these instructions.
 - Verified run over 448 factory ZDLs: `448 ok / 0 fail`; after adding templates, unsupported ops dropped to `56` operations / `11` kinds (from `6541` operations / `39` kinds).
-- Full audio comparison: `85 equal`, `361 diff`, `2 error`. The two remaining crashes are rebuilt `StereoDly` and `StereoDly_1`, caused by an uninitialized pointer in a copied edit handler.
+- After moving the fake stack into a separate `.fardata` arena: `100 equal`, `348 diff`, `0 error`. Most remaining differences are rare `-1 LSB` samples after audio start; with a 1 LSB tolerance, `442 / 448` match.
 - Software-pipelined loops are counted approximately.
 - Predicates and parallel packets are shown as structure, not exact evaluation order.
 - Coefficient tables and delay lines appear as read/write addresses; their meaning is decided by the reader.

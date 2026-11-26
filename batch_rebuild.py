@@ -133,6 +133,7 @@ def rebuild(zdl, func, work, undefs=()):
         flags_byte=1,
         soname_prefix=zdl_soname_prefix(zdl),
         audio_nop=False,
+        allow_large_fardata=True,
         dsp_cost=20.0,
         knob_positions=[(2, 24, 46), (3, 72, 46)],
         allow_fewer_knob_boxes=True,
