@@ -78,11 +78,25 @@ cd examples/st_gt_geq
 python build.py
 ```
 
+Массовый конвейер для фабричных ZDL (нужны `linker.py` и эмулятор из основного репозитория Zoom MS):
+
+```
+python batch_rebuild.py IN_DIR BATCH.csv LIMIT START
+python collect_lifted.py
+python full_audio_compare.py ORIG.ZDL REBUILT.ZDL REPORT.json
+python batch_full_audio_all.py --seconds 4 --workers 4
+python analyze_unsupported.py
+```
+
+`full_audio_compare.py` собирает образ FLASH с одним эффектом и сравнивает original и rebuilt через полный `c6xboot`. `analyze_unsupported.py` пишет `UNSUPPORTED_PATTERNS.md` — частоты и контексты операций, которые эмиттер C ещё не перевёл.
+
 ## Ограничения
 
 - Исходные имена переменных и типы не восстанавливаются.
 - Для стоковых эффектов нужно явно указывать `--func`: автопоиск может выбрать edit-хендлер или объект в данных вместо аудиофункции.
-- Эмиттер C покрывает команды из `examples/REBUILD_ALL.md`; `MPYSPDP` пока пропускается.
+- Эмиттер C покрывает команды из `examples/REBUILD_ALL.md`, а также топ-операции `SMPY32`, `SADD/SSUB`, `MVD`, `SHR/SHRU/SSHL`, `ABS`, `INTSP`, `SPDP`, `CMPEQSP` и double-арифметику. Оставшиеся `unsupported` собраны в `UNSUPPORTED_PATTERNS.md`. Это ограничение эмиттера, а не эмулятора: в `emulator/exec.c` обработчики этих инструкций уже есть.
+- Проверенный прогон по 448 фабричным ZDL: `448 ok / 0 fail`; после добавления шаблонов неподдерживаемых операций осталось `56` операций `11` видов (было `6541` операций `39` видов).
+- Полное сравнение звука: `85 equal`, `361 diff`, `2 error`; два оставшихся падения — пересобранные `StereoDly` и `StereoDly_1` из-за неинициализированного указателя в скопированном edit-хендлере.
 - Циклы с программным конвейером считаются приблизительно.
 - Предикаты и параллельные пакеты показываются как структура, а не как точный порядок вычислений.
 - Таблицы коэффициентов и линии задержки видны как адреса чтения и записи; их смысл определяет человек.
@@ -95,6 +109,9 @@ python build.py
 | `zdl2pseudo.py` | Парсер, граф, символический проход и генератор псевдокода |
 | `calibrate_pseudo.py` | Поиск пар и сравнение структурных признаков |
 | `emit_c.py` | Генератор компилируемого C по аудиофункции |
+| `batch_rebuild.py` | Массовый lift → C → rebuilt ZDL |
+| `full_audio_compare.py`, `batch_full_audio*.py` | Полный звуковой прогон original ↔ rebuilt в `c6xboot` |
+| `collect_lifted.py`, `analyze_unsupported.py` | Сбор lifted C и отчёт по неподдерживаемым операциям |
 | `examples/st_gt_geq/` | Пример пересборки lifted-кода в ZDL |
 | `HOWTO.md` | Пошаговое применение и описание ключей |
 | `CONTRIBUTING.md` | Правила участия |
@@ -208,11 +225,25 @@ cd examples/st_gt_geq
 python build.py
 ```
 
+Mass workflow for factory ZDLs (requires `linker.py` and the emulator from the main Zoom MS repository):
+
+```
+python batch_rebuild.py IN_DIR BATCH.csv LIMIT START
+python collect_lifted.py
+python full_audio_compare.py ORIG.ZDL REBUILT.ZDL REPORT.json
+python batch_full_audio_all.py --seconds 4 --workers 4
+python analyze_unsupported.py
+```
+
+`full_audio_compare.py` builds a FLASH image with one effect and compares original against rebuilt in full `c6xboot`. `analyze_unsupported.py` writes `UNSUPPORTED_PATTERNS.md` with frequencies and contexts for operations the C emitter still does not translate.
+
 ## Limits
 
 - Original variable names and types are not recovered.
 - For stock effects, pass `--func` explicitly: auto-detection may pick an edit handler or a data object instead of the audio function.
-- The C emitter covers the instructions listed in `examples/REBUILD_ALL.md`; `MPYSPDP` is still skipped.
+- The C emitter covers `examples/REBUILD_ALL.md` plus the top ops `SMPY32`, `SADD/SSUB`, `MVD`, `SHR/SHRU/SSHL`, `ABS`, `INTSP`, `SPDP`, `CMPEQSP` and double arithmetic. Remaining `unsupported` ops are collected in `UNSUPPORTED_PATTERNS.md`. This is a C-emitter limit, not an emulator limit: `emulator/exec.c` already has handlers for these instructions.
+- Verified run over 448 factory ZDLs: `448 ok / 0 fail`; after adding templates, unsupported ops dropped to `56` operations / `11` kinds (from `6541` operations / `39` kinds).
+- Full audio comparison: `85 equal`, `361 diff`, `2 error`. The two remaining crashes are rebuilt `StereoDly` and `StereoDly_1`, caused by an uninitialized pointer in a copied edit handler.
 - Software-pipelined loops are counted approximately.
 - Predicates and parallel packets are shown as structure, not exact evaluation order.
 - Coefficient tables and delay lines appear as read/write addresses; their meaning is decided by the reader.

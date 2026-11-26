@@ -22,6 +22,62 @@ REG = re.compile(r"^[AB]\d+$")
 MEM = re.compile(r"^\*(\+\+|[+-])?([AB]\d+)(--|\+\+)?(?:\[([AB]\d+|-?\d+)\]|\(([AB]\d+|-?\d+)\))?$")
 
 
+def c_ident(name):
+    """Turn a disassembler symbol into a valid C identifier."""
+    name = name.strip().split(".")[-1]
+    name = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if name and name[0].isdigit():
+        name = "_" + name
+    return name or "_unknown"
+
+
+PRELUDE = r"""typedef union { unsigned long long u; double d; } dbl_t;
+#pragma CODE_SECTION(sat32, ".audio")
+#pragma CODE_SECTION(sat_add32, ".audio")
+#pragma CODE_SECTION(sat_sub32, ".audio")
+#pragma CODE_SECTION(sat_shl32, ".audio")
+#pragma CODE_SECTION(abs32, ".audio")
+#pragma CODE_SECTION(absf32, ".audio")
+#pragma CODE_SECTION(dbl_from, ".audio")
+#pragma CODE_SECTION(dbl_to, ".audio")
+#pragma CODE_SECTION(dbl_abs, ".audio")
+static unsigned int sat32(long long x) {
+  if (x > 2147483647LL) return 0x7FFFFFFFu;
+  if (x < -2147483648LL) return 0x80000000u;
+  return (unsigned int)(int)x;
+}
+static unsigned int sat_add32(unsigned int a, unsigned int b) {
+  return sat32((long long)(int)a + (int)b);
+}
+static unsigned int sat_sub32(unsigned int a, unsigned int b) {
+  return sat32((long long)(int)a - (int)b);
+}
+static unsigned int sat_shl32(unsigned int a, unsigned int n) {
+  unsigned int lost;
+  if (n == 0) return a;
+  if (n >= 32) return (a & 0x80000000u) ? 0x80000000u : 0x7FFFFFFFu;
+  lost = a >> (32 - n);
+  if (a & 0x80000000u) {
+    if (lost != 0xFFFFFFFFu) return 0x80000000u;
+  } else if (lost != 0) {
+    return 0x7FFFFFFFu;
+  }
+  return a << n;
+}
+static unsigned int abs32(unsigned int a) {
+  return sat32(-(long long)(int)a < 0 ? -(long long)(int)a : (long long)(int)a);
+}
+static float absf32(float x) { return x < 0.0f ? -x : x; }
+static double dbl_from(unsigned int hi, unsigned int lo) {
+  dbl_t x; x.u = ((unsigned long long)hi << 32) | lo; return x.d;
+}
+static void dbl_to(double x, unsigned int *hi, unsigned int *lo) {
+  dbl_t y; y.d = x; *hi = (unsigned int)(y.u >> 32); *lo = (unsigned int)y.u;
+}
+static double dbl_abs(double x) { return x < 0.0 ? -x : x; }
+"""
+
+
 def v(x):
     x = x.strip()
     return f"{x}.u" if REG.match(x) else x
@@ -86,6 +142,21 @@ def mem_write(base, off, action, value):
     if action == "post_inc":
         out.append("%s += %s;" % (v(base), off))
     return out
+
+
+def regnum(s):
+    m = re.match(r"^([AB])(\d+)$", s.strip())
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def mvd_copy(src, dst):
+    s, d = regnum(src), regnum(dst)
+    if not s or not d:
+        return []
+    if s[1] + 1 > 31 or d[1] + 1 > 31:
+        return [f"{d[0]}{d[1]}.u = {s[0]}{s[1]}.u;"]
+    return [f"{d[0]}{d[1]}.u = {s[0]}{s[1]}.u;",
+            f"{d[0]}{d[1] + 1}.u = {s[0]}{s[1] + 1}.u;"]
 
 
 def pred(ins):
@@ -214,10 +285,75 @@ def emit_insn(ins):
         name = a[0].split()[0]
         if REG.match(name):
             return ["return;"]
-        return [f"{p}{name}(ctx);", "return;"]
+        return [f"{p}{c_ident(name)}(ctx);", "return;"]
     if op == "CALLP":
         name = a[0].split()[0]
-        return [f"{p}{name}(ctx);"]
+        return [f"{p}{c_ident(name)}(ctx);"]
+
+    if op == "SMPY32":
+        return [f"{p}{v(a[-1])} = sat32((long long)(int){v(a[0])} * (int){v(a[1])});"]
+    if op in ("SADD", "SSUB"):
+        fn = "sat_add32" if op == "SADD" else "sat_sub32"
+        return [f"{p}{v(a[-1])} = {fn}({v(a[0])}, {v(a[1])});"]
+    if op == "SAT":
+        src = a[0].split(":")[1] if ":" in a[0] else a[0]
+        return [f"{p}{v(a[-1])} = sat32((int){v(src)});"]
+    if op == "ABS":
+        return [f"{p}{v(a[-1])} = abs32({v(a[0])});"]
+    if op in ("SHR", "SHRU"):
+        sh = v(a[1])
+        expr = (f"(int){v(a[0])} >> {sh}" if op == "SHR"
+                else f"{v(a[0])} >> {sh}")
+        return [f"{p}{v(a[-1])} = (unsigned int)({expr});"]
+    if op == "SSHL":
+        return [f"{p}{v(a[-1])} = sat_shl32({v(a[0])}, {v(a[1])});"]
+    if op in ("AND", "OR", "XOR"):
+        sym = {"AND": "&", "OR": "|", "XOR": "^"}[op]
+        return [f"{p}{v(a[-1])} = {v(a[0])} {sym} {v(a[1])};"]
+    if op == "NEG":
+        return [f"{p}{v(a[-1])} = sat32(-(long long)(int){v(a[0])});"]
+    if op == "ROTL":
+        n = int(a[1], 0) & 31
+        if n == 0:
+            return [f"{p}{v(a[-1])} = {v(a[0])};"]
+        return [f"{p}{v(a[-1])} = ({v(a[0])} << {n}) | ({v(a[0])} >> {32 - n});"]
+    if op == "EXTU":
+        start, width = int(a[1], 0), int(a[2], 0)
+        mask = "0xFFFFFFFFu" if width >= 32 else "((1u << %d) - 1u)" % width
+        return [f"{p}{v(a[-1])} = ({v(a[0])} >> {start}) & {mask};"]
+    if op == "INTSP":
+        return [f"{p}{fv(a[-1])} = (float)(int){v(a[0])};"]
+    if op == "INTSPU":
+        return [f"{p}{fv(a[-1])} = (float){v(a[0])};"]
+    if op == "SPTRUNC":
+        return [f"{p}{v(a[-1])} = (unsigned int)(int){fv(a[0])};"]
+    if op == "ABSSP":
+        return [f"{p}{fv(a[-1])} = absf32({fv(a[0])});"]
+    if op in ("CMPEQSP", "CMPEQ"):
+        lhs = fv(a[0]) if op == "CMPEQSP" else v(a[0])
+        rhs = fv(a[1]) if op == "CMPEQSP" else v(a[1])
+        return [f"{p}{v(a[-1])} = ({lhs} == {rhs});"]
+    if op == "MVD":
+        return [p + line for line in mvd_copy(a[0], a[-1])]
+    if op == "SPDP":
+        hi, lo = a[-1].split(":")
+        return [f"{p}dbl_to((double){fv(a[0])}, &{v(hi)}, &{v(lo)});"]
+    if op == "ABSDP":
+        sh, sl = a[0].split(":")
+        dh, dl = a[-1].split(":")
+        return [f"{p}dbl_to(dbl_abs(dbl_from({v(sh)}, {v(sl)})), &{v(dh)}, &{v(dl)});"]
+    if op in ("ADDDP", "SUBDP", "MPYDP"):
+        sym = {"ADDDP": "+", "SUBDP": "-", "MPYDP": "*"}[op]
+        a1h, a1l = a[0].split(":")
+        a2h, a2l = a[1].split(":")
+        dh, dl = a[-1].split(":")
+        expr = (f"dbl_from({v(a1h)}, {v(a1l)}) {sym} "
+                f"dbl_from({v(a2h)}, {v(a2l)})")
+        return [f"{p}dbl_to({expr}, &{v(dh)}, &{v(dl)});"]
+    if op == "ADDAH":
+        return [f"{p}{v(a[-1])} = {v(a[0])} + ({v(a[1])} << 1);"]
+    if op == "SUBAW":
+        return [f"{p}{v(a[-1])} = {v(a[0])} - ({v(a[1])} << 2);"]
     return ["/* unsupported %s %s */" % (ins.op, ins.args)]
 
 
@@ -236,6 +372,7 @@ def emit_c(insns, labels, func):
         "#include <stdint.h>",
         "typedef union { unsigned int u; float f; } reg_t;",
         "#define MEM32(base, off) (*(unsigned int *)((unsigned int)(base) + (off)))",
+        PRELUDE.rstrip(),
         '#pragma CODE_SECTION(%s, ".audio")' % func,
         "void %s(unsigned int *ctx)" % func,
         "{",
@@ -259,6 +396,9 @@ def emit_c(insns, labels, func):
                         continue
                     emitted.add(addr)
             out.append("    " + line)
+    for addr in sorted(targets - emitted):
+        out.append("%s:" % label_for(addr))
+        out.append("    return;")
     out.append("}")
     return "\n".join(out) + "\n"
 
