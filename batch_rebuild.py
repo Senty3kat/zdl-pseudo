@@ -5,6 +5,7 @@ Usage:
     python batch_rebuild.py <zdl1> <zdl2> ... --out REPORT.md
 """
 import json
+import os
 import re
 import struct
 import subprocess
@@ -29,7 +30,7 @@ CL6X = TI_ROOT / "bin" / "cl6x"
 CFLAGS = ["--c99", "--opt_level=2", "--fp_mode=strict", "-mv6740", "--abi=eabi",
           "--mem_model:data=far", f"--include_path={TI_ROOT}/include"]
 EMU = ROOT / "emulator" / "build" / "c6xzdl.exe"
-SINE = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\eqcheck\sine24.wav")
+SINE = Path(os.environ.get("TEMP", ".")) / "opencode" / "eqcheck" / "sine24.wav"
 BAD_RE = re.compile(
     r"_(edit|init|onf|onfaft|open|mute|close|deinit|exit|start|stop|"
     r"set|get|select|update|check|ctl|param)(_|$)"
@@ -228,7 +229,7 @@ def main():
     limit = int(args[2]) if len(args) > 2 else 10
     start = int(args[3]) if len(args) > 3 else 0
     rows = []
-    base = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
+    base = Path(os.environ.get("TEMP", ".")) / "opencode" / "batch"
     for zdl in sorted(in_dir.glob("*.ZDL"))[start:start + limit]:
         zdl = Path(zdl)
         name = zdl.stem
