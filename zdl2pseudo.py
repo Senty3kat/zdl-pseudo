@@ -6,9 +6,8 @@ It lifts TI C6000 assembly (as printed by disasm_zdl.py + dis6x) into commented
 pseudo-C with basic blocks, loops and ctx/params/buf symbols from the Zoom ABI.
 
 Usage:
-    python zdl2pseudo.py effect.ZDL -o effect.pc --cfg effect.dot \
-        --disasm <path-to-disassembler>
-    python zdl2pseudo.py effect.lst -o effect.pc --func Fx_audio
+    python zdl2pseudo.py HDHALL.ZDL -o HDHALL.pc --cfg HDHALL.dot
+    python zdl2pseudo.py HDHALL.lst -o HDHALL.pc --func Fx_REV_HD_Hall
 """
 import re
 import subprocess
@@ -18,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# Optional external disassembler. Not bundled: it needs the TI C6000 toolchain.
+ROOT = HERE.parents[1]
 DISASM = HERE / "disasm_zdl.py"
 
 LINE_RE = re.compile(r"^([0-9A-Fa-f]{8})\s+([0-9a-fA-F]{4,8})?\s*(\|\|)?\s*(.*?)\s*$")
@@ -82,19 +81,15 @@ class Block:
     loop_end: int = 0
 
 
-def run_disasm(inp, work, disasm=None):
+def run_disasm(inp, work):
     lst = work / "effect.lst"
     sym = work / "effect.sym.txt"
     if inp.suffix.lower() == ".lst":
         lst.write_text(inp.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
     else:
-        tool = Path(disasm) if disasm else DISASM
-        if not tool.is_file():
-            sys.exit("disassembler not found: %s (use --disasm or pass a ready .lst)" % tool)
-        run_dir = tool.parent.parent if tool.parent.name == "s3k" else tool.parent
-        cmd = [sys.executable, str(tool), str(inp), "-o", str(lst),
+        cmd = [sys.executable, str(DISASM), str(inp), "-o", str(lst),
                "--symbols", str(sym), "--lines", "0"]
-        subprocess.run(cmd, cwd=run_dir, check=True,
+        subprocess.run(cmd, cwd=ROOT, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     symtxt = sym.read_text(encoding="utf-8", errors="replace") if sym.is_file() else ""
     return lst.read_text(encoding="utf-8", errors="replace"), symtxt
@@ -503,7 +498,6 @@ def main():
     out = None
     cfg = None
     func = ""
-    disasm = None
     i = 1
     while i < len(args):
         if args[i] in ("-o", "--output") and i + 1 < len(args):
@@ -512,15 +506,13 @@ def main():
             cfg = Path(args[i + 1]); i += 2
         elif args[i] == "--func" and i + 1 < len(args):
             func = args[i + 1]; i += 2
-        elif args[i] == "--disasm" and i + 1 < len(args):
-            disasm = args[i + 1]; i += 2
         else:
             sys.exit("unknown option: %s" % args[i])
     if not func and inp.suffix.lower() != ".lst":
         m = re.search(r"audio_func=([^\s]+)", inp.read_bytes().decode("latin-1", "replace"))
         func = m.group(1) if m else ""
     with tempfile.TemporaryDirectory(prefix="zdl_pseudo_") as td:
-        text, symtxt = run_disasm(inp, Path(td), disasm)
+        text, symtxt = run_disasm(inp, Path(td))
         insns, labels = parse_listing(text)
     if not insns:
         sys.exit("no instructions parsed")

@@ -8,10 +8,12 @@ import json
 import re
 import struct
 import subprocess
+import os
 import sys
 import tempfile
 from pathlib import Path
 
+TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "toolchain" / "zdl")]
@@ -29,7 +31,7 @@ CL6X = TI_ROOT / "bin" / "cl6x"
 CFLAGS = ["--c99", "--opt_level=2", "--fp_mode=strict", "-mv6740", "--abi=eabi",
           "--mem_model:data=far", f"--include_path={TI_ROOT}/include"]
 EMU = ROOT / "emulator" / "build" / "c6xzdl.exe"
-SINE = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\eqcheck\sine24.wav")
+SINE = TMP / "eqcheck/sine24.wav"
 BAD_RE = re.compile(
     r"_(edit|init|onf|onfaft|open|mute|close|deinit|exit|start|stop|"
     r"set|get|select|update|check|ctl|param)(_|$)"
@@ -99,7 +101,7 @@ def rebuild(zdl, func, work, undefs=()):
     csrc = emit_c.emit_c(insns, labels, func)
     called = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", csrc))
     defined = set(re.findall(r"\bvoid\s+([A-Za-z_]\w*)\s*\(", csrc))
-    skip = {"MEM32", "CODE_SECTION", "sat32", "sat_add32", "sat_sub32",
+    skip = {"MEM32", "CODE_SECTION", "DBG", "sat32", "sat_add32", "sat_sub32",
             "sat_shl32", "abs32", "absf32", "dbl_from", "dbl_to", "dbl_abs",
             "if", "while", "for", "switch", "return", "sizeof"}
     needed = sorted((called | set(undefs)) - defined - skip - {func, "none"})
@@ -163,7 +165,7 @@ def main():
     limit = int(args[2]) if len(args) > 2 else 10
     start = int(args[3]) if len(args) > 3 else 0
     rows = []
-    base = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
+    base = TMP / "batch"
     for zdl in sorted(in_dir.glob("*.ZDL"))[start:start + limit]:
         zdl = Path(zdl)
         name = zdl.stem

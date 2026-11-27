@@ -9,12 +9,13 @@ import subprocess
 import wave
 from pathlib import Path
 
+TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 EMU = Path(os.environ.get("C6XBOOT", str(ROOT / "emulator" / "build" / "c6xboot.exe")))
 FSEDIT = ROOT / "emulator" / "tools" / "fsedit.py"
 FW = ROOT / "vst_zdl" / "fw70"
-SINE = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\hdfw-hd\sine.wav")
+SINE = TMP / "hdfw-hd/sine.wav"
 FW_FILES = ["129_main_OS.bin", "133_data_133.bin", "136_bootloader.bin"]
 
 
@@ -25,7 +26,7 @@ def fsname(path):
 
 
 def stock_zdl_names():
-    tmp = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\fs-list-tmp.bin")
+    tmp = TMP / "fs-list-tmp.bin"
     r = subprocess.run([ "python", str(FSEDIT), str(FW / "137_file_system.bin"),
                          str(tmp), "--list" ], capture_output=True, text=True)
     names = []
@@ -71,6 +72,36 @@ def stats(path):
     return s, rms, peak
 
 
+SKIP_START_MS = 50
+LOUD_THRESHOLD = 10
+
+
+def first_loud(samples, threshold=LOUD_THRESHOLD):
+    for i, v in enumerate(samples):
+        if abs(v) > threshold:
+            return i
+    return None
+
+
+def steady_diff(orig_samples, rebuilt_samples, skip_ms=SKIP_START_MS):
+    so = first_loud(orig_samples)
+    sr = first_loud(rebuilt_samples)
+    if so is None or sr is None:
+        return {"orig_start": so, "reb_start": sr, "start_delta": None,
+                "steady_skip_ms": skip_ms, "steady_rms_diff": None,
+                "steady_max_sample_diff": None, "byte_equal_steady": None,
+                "steady_equal_1lsb": None}
+    start = max(so, sr) + int(44100 * skip_ms / 1000)
+    diff = [y - x for x, y in zip(orig_samples[start:], rebuilt_samples[start:])]
+    max_diff = max((abs(x) for x in diff), default=0)
+    return {"orig_start": so, "reb_start": sr, "start_delta": sr - so,
+            "steady_skip_ms": skip_ms,
+            "steady_rms_diff": math.sqrt(sum(x * x for x in diff) / len(diff)) / 32768 if diff else 0.0,
+            "steady_max_sample_diff": max_diff,
+            "byte_equal_steady": all(x == 0 for x in diff),
+            "steady_equal_1lsb": max_diff <= 1}
+
+
 def compare(orig, rebuilt, report, seconds=8, snap_ms=None):
     base = Path(report).with_suffix("")
     base.mkdir(parents=True, exist_ok=True)
@@ -97,6 +128,7 @@ def compare(orig, rebuilt, report, seconds=8, snap_ms=None):
         "orig_peak": results["orig"]["peak"],
         "reb_peak": results["reb"]["peak"],
     }
+    out.update(steady_diff(a0, a1))
     Path(report).write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out
 

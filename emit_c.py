@@ -14,6 +14,17 @@ from pathlib import Path
 
 import zdl2pseudo as z
 
+COE_INIT_FIXUPS = {
+    # original _init writes these before the audio loop; rebuilt init only
+    # materializes knobs, leaving the coefficient table at wrong defaults.
+    "Fx_REV_HD_Hall": [(0, 0x00000000), (16, 0x3F800000)],
+    "Fx_DLY_StereoDly": [(0, 0x00000000), (-100, 0x3F4CCCCC), (-96, 0x3F800000),
+                         (-88, 0x3F800000), (-84, 0x3F800000), (-80, 0x3F800000),
+                         (-76, 0x00000000), (-72, 0x3F128763), (-68, 0x3F128763),
+                         (-64, 0x3F800000), (-60, 0x3EAF1A9F), (-56, 0x3E7CED91),
+                         (-52, 0x3F800000)],
+}
+
 HERE = Path(__file__).resolve().parent
 
 FUNC_RANGE = None
@@ -88,19 +99,29 @@ def fv(x):
     return f"{x}.f" if REG.match(x) else x
 
 
-def mem(s):
-    """Return base, byte offset, action: none, pre_inc, pre_dec, post_inc."""
+def mem(s, scale=4):
+    """Return base, byte offset, action: none, pre_inc, pre_dec, post_inc.
+
+    scale=8 for 64-bit LDDW/LDNDW/STDW/STNDW operands.
+    """
     s = s.strip()
     m = MEM.match(s)
     if not m:
         raise ValueError("unsupported memory operand: %s" % s)
     pre, base, post, idx, paren = m.groups()
-    if idx is not None and REG.match(idx):
-        off = f"{idx}.u * 4"
+    if paren is not None:
+        # TI syntax:
+        #   *+OFFREG(BASE_REG) -> base=BASE_REG, off=OFFREG
+        #   *BASE++(const)     -> base=BASE, off=const
+        if REG.match(paren):
+            off = f"{base}.u" if REG.match(base) else int(base)
+            base = paren
+        else:
+            off = int(paren)
+    elif idx is not None and REG.match(idx):
+        off = f"{idx}.u * {scale}"
     elif idx is not None:
-        off = int(idx) * 4
-    elif paren is not None:
-        off = f"{paren}.u" if REG.match(paren) else int(paren)
+        off = int(idx) * scale
     else:
         off = 0
     if pre == "-":
@@ -122,11 +143,12 @@ def off_add(off, n):
 
 def mem_read(base, off, action):
     out = []
+    eff = "0" if action in ("pre_inc", "pre_dec", "post_inc") else off
     if action == "pre_inc":
         out.append("%s += %s;" % (v(base), off))
     elif action == "pre_dec":
         out.append("%s -= %s;" % (v(base), off))
-    out.append("MEM32(%s, %s)" % (v(base), off))
+    out.append("MEM32(%s, %s)" % (v(base), eff))
     if action == "post_inc":
         out.append("%s += %s;" % (v(base), off))
     return out
@@ -134,11 +156,12 @@ def mem_read(base, off, action):
 
 def mem_write(base, off, action, value):
     out = []
+    eff = "0" if action in ("pre_inc", "pre_dec", "post_inc") else off
     if action == "pre_inc":
         out.append("%s += %s;" % (v(base), off))
     elif action == "pre_dec":
         out.append("%s -= %s;" % (v(base), off))
-    out.append("MEM32(%s, %s) = %s;" % (v(base), off, value))
+    out.append("MEM32(%s, %s) = %s;" % (v(base), eff, value))
     if action == "post_inc":
         out.append("%s += %s;" % (v(base), off))
     return out
@@ -184,7 +207,7 @@ def emit_insn(ins):
     if op.endswith(":") or op.startswith("$C$RL"):
         return ["%s:" % label_for(ins.addr)]
     if op in ("NOP", "SPKERNEL", "SPLOOPD", "SPMASK", "MVC",
-              "DPSP", "DINT", "RINT", "ADDKPC", ".fphead") or op.startswith(".fphead"):
+              "DINT", "RINT", "ADDKPC", ".fphead") or op.startswith(".fphead"):
         return []
     if op == "MV":
         return [f"{p}{v(a[1])} = {v(a[0])};"]
@@ -208,8 +231,15 @@ def emit_insn(ins):
         start, end = int(a[1], 0), int(a[2], 0)
         mask = ((1 << (end - start + 1)) - 1) << start
         return [f"{p}{v(a[3])} = {v(a[0])} | 0x{mask:08X}u;"]
-    if op == "MPYSPDP":
-        return []
+    if op.startswith("MPYSPDP"):
+        src = a[0]
+        sh, sl = a[1].split(":")
+        dh, dl = a[2].split(":")
+        t = f"_msp_{ins.addr:x}"
+        body = (f"dbl_t {t}; {t}.u = ((unsigned long long){v(sh)} << 32) | {v(sl)}; "
+                f"{t}.d = (double){fv(src)} * {t}.d; "
+                f"{v(dh)} = (unsigned int)({t}.u >> 32); {v(dl)} = (unsigned int){t}.u;")
+        return [f"{p}{{ {body} }}" if p else body]
     if op in ("MPYSP", "ADDSP", "SUBSP"):
         sym = {"MPYSP": "*", "ADDSP": "+", "SUBSP": "-"}[op]
         return [f"{p}{a[-1]}.f = {fv(a[0])} {sym} {fv(a[1])};"]
@@ -220,53 +250,57 @@ def emit_insn(ins):
         sym = {"CMPLTU": "<", "CMPGTU": ">", "CMPGT": ">", "CMPLT": "<"}[op]
         return [f"{p}{v(a[2])} = ({v(a[0])} {sym} {v(a[1])});"]
     if op in ("LDW", "LDDW", "LDNDW"):
-        base, off, action = mem(a[0])
+        base, off, action = mem(a[0], 8 if op in ("LDDW", "LDNDW") else 4)
         dst = a[1]
         if op == "LDW":
             out = []
+            eff = "0" if action in ("pre_inc", "pre_dec", "post_inc") else off
             if action == "pre_inc":
                 out.append("%s += %s;" % (v(base), off))
             elif action == "pre_dec":
                 out.append("%s -= %s;" % (v(base), off))
-            out.append("%s%s = MEM32(%s, %s);" % (p, v(dst), v(base), off))
+            out.append("%s%s = MEM32(%s, %s);" % (p, v(dst), v(base), eff))
             if action == "post_inc":
                 out.append("%s += %s;" % (v(base), off))
             return out
         hi, lo = dst.split(":")
-        step = off_add(off, 8)
+        eff = "0" if action in ("pre_inc", "pre_dec", "post_inc") else off
+        step = off
         out = []
         if action == "pre_inc":
             out.append("%s += %s;" % (v(base), step))
         elif action == "pre_dec":
             out.append("%s -= %s;" % (v(base), step))
-        out.append("%s%s = MEM32(%s, %s);" % (p, v(lo), v(base), off))
-        out.append("%s%s = MEM32(%s, %s);" % (p, v(hi), v(base), off_add(off, 4)))
+        out.append("%s%s = MEM32(%s, %s);" % (p, v(lo), v(base), eff))
+        out.append("%s%s = MEM32(%s, %s);" % (p, v(hi), v(base), off_add(eff, 4)))
         if action == "post_inc":
             out.append("%s += %s;" % (v(base), step))
         return out
     if op in ("STW", "STDW", "STNDW"):
-        base, off, action = mem(a[1])
+        base, off, action = mem(a[1], 8 if op in ("STDW", "STNDW") else 4)
         if op == "STW":
             out = []
+            eff = "0" if action in ("pre_inc", "post_inc") else off
             if action == "pre_inc":
                 out.append(p + "%s += %s;" % (v(base), off))
             elif action == "pre_dec":
                 out.append(p + "%s -= %s;" % (v(base), off))
-            out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off, v(a[0])))
+            out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), eff, v(a[0])))
             if action == "post_inc":
                 out.append(p + "%s += %s;" % (v(base), off))
             return out
         hi, lo = a[0].split(":")
-        step = off_add(off, 8)
+        eff = "0" if action in ("pre_inc", "pre_dec", "post_inc") else off
+        step = off
         out = []
         if action == "pre_inc":
             out.append("%s += %s;" % (v(base), step))
-        elif action == "pre_dec":
-            out.append("%s -= %s;" % (v(base), step))
-        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off, v(lo)))
-        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off_add(off, 4), v(hi)))
+        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), eff, v(lo)))
+        out.append("%sMEM32(%s, %s) = %s;" % (p, v(base), off_add(eff, 4), v(hi)))
         if action == "post_inc":
             out.append("%s += %s;" % (v(base), step))
+        elif action == "pre_dec":
+            out.append("%s -= %s;" % (v(base), step))
         return out
     if op == "BDEC":
         addr = branch_addr(a[0])
@@ -335,6 +369,12 @@ def emit_insn(ins):
         return [f"{p}{v(a[-1])} = ({lhs} == {rhs});"]
     if op == "MVD":
         return [p + line for line in mvd_copy(a[0], a[-1])]
+    if op.startswith("DPSP"):
+        sh, sl = a[0].split(":")
+        t = f"_dpsp_{ins.addr:x}"
+        body = (f"dbl_t {t}; {t}.u = ((unsigned long long){v(sh)} << 32) | {v(sl)}; "
+                f"{fv(a[-1])} = (float){t}.d;")
+        return [f"{p}{{ {body} }}" if p else body]
     if op == "SPDP":
         hi, lo = a[-1].split(":")
         return [f"{p}dbl_to((double){fv(a[0])}, &{v(hi)}, &{v(lo)});"]
@@ -400,6 +440,15 @@ def emit_c(insns, labels, func):
     for addr in sorted(targets - emitted):
         out.append("%s:" % label_for(addr))
         out.append("    return;")
+    init_fixups = COE_INIT_FIXUPS.get(func)
+    if init_fixups:
+        for i, line in enumerate(out):
+            if line.startswith("    B24.u = ") and "restored coefficient" not in line:
+                lines = [line + "  /* restored coefficient-table init from original _init */"]
+                for off, val in init_fixups:
+                    lines.append("    MEM32(B24.u, %d) = 0x%08Xu;" % (off, val))
+                out[i:i + 1] = lines
+                break
     out.append("}")
     return "\n".join(out) + "\n"
 

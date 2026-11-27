@@ -2,10 +2,12 @@
 """Copy every lifted C file from the batch workspace into a durable folder."""
 import csv
 import shutil
+import os
 from pathlib import Path
 
+TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
-BATCH = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
+BATCH = TMP / "batch"
 BATCH_CSV = Path(r"C:\zoom\zdlnew\BATCH_ALL.csv")
 OUT = Path(r"C:\zoom\zdlnew\LIFTED_C")
 INDEX = Path(r"C:\zoom\zdlnew\LIFTED_C_INDEX.csv")

@@ -2,12 +2,14 @@
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 
 import full_audio_compare as fac
 
+TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
-BATCH = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
+BATCH = TMP / "batch"
 FULL = Path(r"C:\zoom\zdlnew\FULL_AUDIO")
 
 

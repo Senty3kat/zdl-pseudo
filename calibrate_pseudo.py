@@ -8,8 +8,7 @@ Compares structural facts, not source text:
   - share of unrecognised instructions.
 
 Usage:
-    python calibrate_pseudo.py --zdl-dir DIR --src-dir DIR \
-        [--src-dir DIR2] [--disasm PATH] [--out report.md]
+    python cfw/s3k/calibrate_pseudo.py [--out report.md]
 """
 import json
 import re
@@ -19,10 +18,13 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE
-SRC_DIRS = []       # --src-dir, one or more folders with effect subfolders
-ZDL_DIRS = []       # --zdl-dir, one or more folders with .ZDL files
-DISASM = None       # --disasm, only needed when inputs are .ZDL
+ROOT = HERE.parents[1]
+EFFECTS = ROOT / "effects"
+EXTRA_SRC = [
+    Path(r"C:\zoom\matujuice\zoom-ms-zdl-effects-pack-main\src\custom"),
+    Path(r"C:\zoom\themanro\ZoomMultistompZDL-main\src\airwindows"),
+]
+ZDLNEW = Path(r"C:\zoom\zdlnew")
 PSEUDO = HERE / "zdl2pseudo.py"
 
 CTX_RE = re.compile(r"\bctx\s*\[\s*(\d+)\s*\]")
@@ -111,19 +113,16 @@ def recall(a, b):
 def pairs():
     out = []
     seen = set()
-    roots = [r for r in SRC_DIRS if r.is_dir()]
-    zdl_roots = [r for r in ZDL_DIRS if r.is_dir()]
+    roots = [EFFECTS] + [r for r in EXTRA_SRC if r.is_dir()]
     for base in roots:
         for d in sorted(base.iterdir()):
             if not d.is_dir():
                 continue
             norm = d.name.lower().replace("_", "")
-            name = d.name[0].upper() + d.name[1:]
-            candidates = [zr / (name + ".ZDL") for zr in zdl_roots]
-            zdl = next((z for z in candidates if z.is_file()), None)
-            if not zdl:
-                cand = [z for zr in zdl_roots for z in zr.glob("*.ZDL")
-                        if z.stem.lower().replace("_", "") == norm]
+            alias = {"stressparams": "StressP"}.get(norm)
+            zdl = ZDLNEW / ((alias or (d.name[0].upper() + d.name[1:])) + ".ZDL")
+            if not zdl.is_file():
+                cand = [z for z in ZDLNEW.glob("*.ZDL") if z.stem.lower().replace("_", "") == norm]
                 if not cand:
                     continue
                 zdl = cand[0]
@@ -138,23 +137,9 @@ def pairs():
 
 
 def main():
-    global SRC_DIRS, ZDL_DIRS, DISASM
     out = None
-    args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        if args[i] == "--out" and i + 1 < len(args):
-            out = Path(args[i + 1]); i += 2
-        elif args[i] == "--src-dir" and i + 1 < len(args):
-            SRC_DIRS.append(Path(args[i + 1])); i += 2
-        elif args[i] == "--zdl-dir" and i + 1 < len(args):
-            ZDL_DIRS.append(Path(args[i + 1])); i += 2
-        elif args[i] == "--disasm" and i + 1 < len(args):
-            DISASM = args[i + 1]; i += 2
-        elif args[i] in ("-h", "--help"):
-            sys.exit(__doc__)
-        else:
-            sys.exit("unknown option: %s" % args[i])
+    if "--out" in sys.argv:
+        out = Path(sys.argv[sys.argv.index("--out") + 1])
     rows = []
     ps = pairs()
     if not ps:
@@ -163,8 +148,6 @@ def main():
         for zdl, src in ps:
             pc = Path(td) / (zdl.stem + ".pc")
             cmd = [sys.executable, str(PSEUDO), str(zdl), "-o", str(pc)]
-            if DISASM:
-                cmd += ["--disasm", str(DISASM)]
             r = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
             if r.returncode or not pc.is_file():

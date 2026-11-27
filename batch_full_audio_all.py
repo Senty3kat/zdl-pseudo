@@ -1,16 +1,18 @@
 """Parallel full-emulator audio check for every rebuilt ZDL in BATCH_ALL.csv."""
 import argparse
 import csv
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import full_audio_compare as fac
 
+TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
-IN_DIR = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\em_named")
+IN_DIR = TMP / "em_named"
 BATCH = Path(r"C:\zoom\zdlnew\BATCH_ALL.csv")
-BUILT = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
+BUILT = TMP / "batch"
 FULL = Path(r"C:\zoom\zdlnew\FULL_AUDIO")
 
 
@@ -28,10 +30,12 @@ def check(name, seconds):
     try:
         r = fac.compare(IN_DIR / f"{name}.ZDL", BUILT / name / "rebuilt.ZDL",
                         report, seconds=seconds)
-        status = "equal" if r["byte_equal"] and r["screen_equal"] else "diff"
-        return (name, status, "%.8f" % r["rms_diff"], r["max_sample_diff"])
+        status = "equal" if r["steady_equal_1lsb"] and r["screen_equal"] else "diff"
+        return (name, status, "%.8f" % r["rms_diff"], r["max_sample_diff"],
+                r["orig_start"], r["reb_start"], r["start_delta"],
+                "%.8f" % r["steady_rms_diff"], r["steady_max_sample_diff"])
     except Exception as e:
-        return (name, "error", str(e)[:120], 0)
+        return (name, "error", str(e)[:120], 0, None, None, None, None, None)
 
 
 def main():
@@ -53,7 +57,9 @@ def main():
                 print(i, "done", flush=True)
     with open(a.out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["Effect", "Audio", "RMSDiff", "MaxSampleDiff"])
+        w.writerow(["Effect", "Audio", "RMSDiff", "MaxSampleDiff",
+                    "OrigStart", "RebStart", "StartDelta",
+                    "SteadyRMSDiff", "SteadyMaxDiff"])
         w.writerows(rows)
     equal = sum(1 for r in rows if r[1] == "equal")
     diff = sum(1 for r in rows if r[1] == "diff")
