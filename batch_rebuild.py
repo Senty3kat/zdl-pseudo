@@ -8,12 +8,10 @@ import json
 import re
 import struct
 import subprocess
-import os
 import sys
 import tempfile
 from pathlib import Path
 
-TMP = Path(os.environ.get("TEMP", ".")) / "opencode"
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "toolchain" / "zdl")]
@@ -31,7 +29,7 @@ CL6X = TI_ROOT / "bin" / "cl6x"
 CFLAGS = ["--c99", "--opt_level=2", "--fp_mode=strict", "-mv6740", "--abi=eabi",
           "--mem_model:data=far", f"--include_path={TI_ROOT}/include"]
 EMU = ROOT / "emulator" / "build" / "c6xzdl.exe"
-SINE = TMP / "eqcheck/sine24.wav"
+SINE = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\eqcheck\sine24.wav")
 BAD_RE = re.compile(
     r"_(edit|init|onf|onfaft|open|mute|close|deinit|exit|start|stop|"
     r"set|get|select|update|check|ctl|param)(_|$)"
@@ -93,6 +91,60 @@ def zdl_soname_prefix(path):
     return m.group(1).decode("ascii") if m else None
 
 
+def zdl_original_screen(path):
+    """Return original RLE picture and imageInfo settings from a factory ZDL.
+
+    The first PT_LOAD segment at VA 0x80000000 is .const:
+        picture bytes | knob descriptor table | effectTypeImageInfo
+    We copy the picture verbatim and reproduce the imageInfo header words,
+    knob count and the first three coordinate slots.
+    """
+    d = Path(path).read_bytes()
+    i = d.find(b"\x7fELF")
+    if i < 0:
+        raise ValueError("no ELF in ZDL")
+    e = d[i:]
+    phoff = int.from_bytes(e[28:32], "little")
+    phes = int.from_bytes(e[42:44], "little")
+    phn = int.from_bytes(e[44:46], "little")
+    const = None
+    for j in range(phn):
+        ph = phoff + j * phes
+        if int.from_bytes(e[ph:ph + 4], "little") != 1:
+            continue
+        off = int.from_bytes(e[ph + 4:ph + 8], "little")
+        va = int.from_bytes(e[ph + 8:ph + 12], "little")
+        fsz = int.from_bytes(e[ph + 16:ph + 20], "little")
+        if va == 0x80000000:
+            const = e[off:off + fsz]
+            break
+    if const is None:
+        raise ValueError("no .const segment in ZDL")
+
+    desc = const.find(b"OnOff\0")
+    if desc <= 0:
+        raise ValueError("no knob descriptor in ZDL const")
+    picture = const[:desc]
+
+    pat = struct.pack("<IIIII", 0, 1, 0, 128, 64)
+    info = const.find(pat, desc)
+    if info < 0:
+        raise ValueError("no effectTypeImageInfo in ZDL const")
+    u32 = lambda o: int.from_bytes(const[info + o:info + o + 4], "little")
+    count = u32(32)
+    header = (u32(24), u32(28))
+    knobs = []
+    for k in range(min(3, count)):
+        b = 36 + k * 16
+        knobs.append((u32(b), u32(b + 4), u32(b + 8)))
+    return {
+        "screen_image": bytes(picture),
+        "knob_positions": knobs,
+        "image_info_knob_count": count,
+        "image_info_header_words": header,
+    }
+
+
 def rebuild(zdl, func, work, undefs=()):
     with tempfile.TemporaryDirectory(prefix="lift_") as td:
         text, sym = emit_c.z.run_disasm(zdl, Path(td))
@@ -124,10 +176,19 @@ def rebuild(zdl, func, work, undefs=()):
                   for i in range(9)]
     if not params:
         params = [{"name": "P1", "max": 100, "default": 50, "flags": 0}]
+    try:
+        screen = zdl_original_screen(zdl)
+    except Exception:
+        screen = {
+            "screen_image": make_cover(effect_name[:12], [p["name"] for p in params[:3]]),
+            "knob_positions": [(2, 24, 46), (3, 72, 46)],
+            "image_info_knob_count": None,
+            "image_info_header_words": None,
+        }
     cfg = LinkerConfig(
         materialize_init=True,
         effect_name=effect_name[:12],
-        screen_image=make_cover(effect_name[:12], [p["name"] for p in params[:3]]),
+        screen_image=screen["screen_image"],
         audio_func_name=func,
         gid=gid,
         fxid=fxid,
@@ -140,7 +201,9 @@ def rebuild(zdl, func, work, undefs=()):
         audio_nop=False,
         allow_large_fardata=True,
         dsp_cost=20.0,
-        knob_positions=[(2, 24, 46), (3, 72, 46)],
+        knob_positions=screen["knob_positions"],
+        image_info_knob_count=screen["image_info_knob_count"],
+        image_info_header_words=screen["image_info_header_words"],
         allow_fewer_knob_boxes=True,
         use_object_edit_handlers=False,
         synthesize_linesel_edit_handlers=True,
@@ -165,7 +228,7 @@ def main():
     limit = int(args[2]) if len(args) > 2 else 10
     start = int(args[3]) if len(args) > 3 else 0
     rows = []
-    base = TMP / "batch"
+    base = Path(r"C:\Users\arsen\AppData\Local\Temp\opencode\batch")
     for zdl in sorted(in_dir.glob("*.ZDL"))[start:start + limit]:
         zdl = Path(zdl)
         name = zdl.stem
