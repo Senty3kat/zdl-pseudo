@@ -116,6 +116,7 @@ python analyze_unsupported.py
 | `batch_rebuild.py` | Массовый lift → C → rebuilt ZDL |
 | `full_audio_compare.py`, `batch_full_audio*.py` | Полный звуковой прогон original ↔ rebuilt в `c6xboot` |
 | `check_worst50.py` | Повторная проверка только 50 худших эффектов с текущим эмиттером |
+| `compare_ui_turn.py`, `compare_sweep_turn.py`, `render_sweep_spec.py` | Проверка ручек через UI и свип со спектограммами L/R |
 | `collect_lifted.py`, `analyze_unsupported.py` | Сбор lifted C и отчёт по неподдерживаемым операциям |
 | `examples/st_gt_geq/` | Пример пересборки lifted-кода в ZDL |
 | `HOWTO.md` | Пошаговое применение и описание ключей |
@@ -266,6 +267,7 @@ python analyze_unsupported.py
 | `calibrate_pseudo.py` | Pair discovery and structural comparison |
 | `emit_c.py` | Compilable C emitter for an audio function |
 | `check_worst50.py` | Re-check only the 50 worst effects with the current emitter |
+| `compare_ui_turn.py`, `compare_sweep_turn.py`, `render_sweep_spec.py` | UI knob checks and sweep-based L/R spectrogram verification |
 | `examples/st_gt_geq/` | Example rebuild of lifted code into a ZDL |
 | `HOWTO.md` | Step-by-step usage and options |
 | `CONTRIBUTING.md` | Contribution rules |
