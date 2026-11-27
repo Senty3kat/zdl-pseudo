@@ -514,6 +514,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="zdl_pseudo_") as td:
         text, symtxt = run_disasm(inp, Path(td))
         insns, labels = parse_listing(text)
+        for line in symtxt.splitlines():
+            m = re.match(r"^([0-9A-Fa-f]{8})\s+FUNC\s+(\S+)", line)
+            if m:
+                labels.setdefault(int(m.group(1), 16), m.group(2))
     if not insns:
         sys.exit("no instructions parsed")
     if not func:
